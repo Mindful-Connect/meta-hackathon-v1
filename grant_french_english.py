@@ -155,7 +155,7 @@ def process_uploaded_document(file_path):
         return f"Unsupported file type: {file_type}"
 
 
-def generate_prompt(language, question, user_data, document_text, options=None):
+def generate_prompt(language, question, user_data, document_text, options):
     """
     Generate the input prompt for the AI model in the appropriate language.
     """
@@ -188,20 +188,34 @@ def generate_prompt(language, question, user_data, document_text, options=None):
 
     elif language == "fr":
         return f"""
-        Vous êtes une IA experte en rédaction de subventions. En vous basant sur les informations commerciales et le document fournis, générez une réponse professionnelle et convaincante à la question ci-dessous :
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'Entreprise**, le **Document Supplémentaire** et les **Options** fournies.
 
-        Question : {question}
+        - Les **Informations sur l'Entreprise** sont fournies sous forme de fichier JSON contenant les détails personnels et professionnels du demandeur.
+        - Le **Document Supplémentaire** est facultatif et peut inclure des informations supplémentaires extraites de fichiers (par exemple, PDF, documents Word).
+        - Le champ **Options** est facultatif. S'il existe, sélectionnez la réponse la plus appropriée parmi les options fournies. 
 
-        Informations commerciales :
+        **Directives pour la Génération des Réponses**:
+        1. Si des **Options** sont fournies, sélectionnez l'option la plus pertinente comme réponse, répondez uniquement avec l'option, n'ajoutez aucun mot ou symbole supplémentaire.
+        2. Si la question demande des informations spécifiques (par exemple, une date, une adresse ou un événement), fournissez une réponse précise et exacte.
+        3. Pour les questions générales, élaborez une réponse détaillée, convaincante et professionnelle, en incorporant toutes les informations pertinentes.
+        4. **Fournissez votre réponse en français sous forme d'un récit poli et clair.** La réponse doit être un paragraphe unique et simple **sans aucun symbole spécial, phrases introductrices ou commentaires supplémentaires.**
+
+        **Question**:
+        {question}
+        
+        **Options**:
+        {options or "Non fourni"}
+
+        **Informations sur l'Entreprise**:
         {json.dumps(user_data, indent=4)}
 
-        Document supplémentaire :
-        {document_text}
+        **Document Supplémentaire**:
+        {document_text or "Non fourni"}
         """
 
 
 def integrate_document_content_with_grant_writing(
-    question, user_data, file_paths, options=None
+    question, user_data, file_paths, options
 ):
     """
     Integrates document content into the grant-writing process.
@@ -213,11 +227,14 @@ def integrate_document_content_with_grant_writing(
 
     combined_document_text = "\n\n".join(document_texts)
     language = detect_language(question)
+
     prompt = generate_prompt(
         language, question, user_data, combined_document_text, options
     )
 
     print(prompt)
+
+    print(f"--------The language is: {language}")
 
     # Prepare request body for the AI model
     model_id = "us.meta.llama3-2-90b-instruct-v1:0"
@@ -225,7 +242,7 @@ def integrate_document_content_with_grant_writing(
         {
             "prompt": prompt,
             "max_gen_len": 300,
-            "temperature": 0.6,
+            "temperature": 0.3,
             # "top_p": 0.9,
         }
     )
@@ -263,13 +280,13 @@ if __name__ == "__main__":
     # options = None
 
     # Example Question2
-    # question = "What is the name of your company?"  # English example
+    # question = "What is the name of the company?"  # English example
     # options = None
 
     # Example Question3
     question = "When was the company registered?"  # English example
     options = ["2021", "2022", "2023"]
-    options = None
+    # options = None
 
     # Path to the uploaded PDF document
     uploaded_files = ["./Govago Business Plan.pdf"]
