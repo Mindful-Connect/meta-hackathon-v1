@@ -1,8 +1,8 @@
 import json
 import logging
 import requests
-import boto3
 from langdetect import detect, DetectorFactory
+import boto3
 from botocore.exceptions import ClientError
 
 # Ensure consistent results from langdetect
@@ -10,7 +10,6 @@ DetectorFactory.seed = 0
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
 
 def fetch_user_data(api_url, headers=None):
     """
@@ -26,7 +25,6 @@ def fetch_user_data(api_url, headers=None):
         logger.error(f"Error fetching user data from API ({api_url}): {e}")
     return {}
 
-
 def detect_language(text):
     """
     Detects the language of a given text.
@@ -39,7 +37,6 @@ def detect_language(text):
     except Exception as e:
         logger.warning(f"Language detection failed: {e}")
         return "en"  # Default to English if detection fails
-
 
 def generate_text(model_id, body):
     """
@@ -55,108 +52,65 @@ def generate_text(model_id, body):
     response_body = json.loads(response.get("body").read())
     return response_body
 
-
 def clean_response(response_text):
     """
-    Removes any unwanted special tokens or formatting from the response.
+    Cleans the response from the AI model to remove unwanted tokens or formatting.
     """
     res = response_text.split("\n", 1)
     if len(res) > 1:
         res = res[1].strip()
     else:
         res = res[0].strip()
-    res = res.replace("Response:", "").strip()
-    res = res.replace("**Response**:", "").strip()
-    return res
+    return res.replace("Response:", "").strip()
 
-
-def generate_prompt(language, question, user_data, options):
+def generate_prompt(language, question, user_data):
     """
     Generate the input prompt for the AI model in the appropriate language.
     """
     if language == "en":
         return f"""
-        You are an expert at generating precise, professional, and compelling answers to grant application questions.
+        You are an expert at generating precise, professional, and compelling answers to questions using the provided **User Information**.
 
         **Instructions**:
-        - Use the provided **User Data** and **Options** (if any).
-        - Respond in a professional and concise format.
+        - Use the user information to craft a professional and accurate response.
+        - The response must be concise and directly address the question.
 
         **Question**:
         {question}
 
-        **Options**:
-        {options or "Not provided"}
-
-        **User Data**:
+        **User Information**:
         {json.dumps(user_data, indent=4)}
 
         **Response**:
         """
-
     elif language == "fr":
         return f"""
-        Vous êtes un expert en rédaction de réponses précises, professionnelles et convaincantes pour les demandes de subventions.
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes en utilisant les **Informations Utilisateur** fournies.
 
         **Instructions** :
-        - Utilisez les **Données Utilisateur** et les **Options** (le cas échéant).
-        - Répondez de manière professionnelle et concise.
+        - Utilisez les informations utilisateur pour rédiger une réponse professionnelle et exacte.
+        - La réponse doit être concise et répondre directement à la question.
 
         **Question** :
         {question}
 
-        **Options** :
-        {options or "Non fourni"}
-
-        **Données Utilisateur** :
+        **Informations Utilisateur** :
         {json.dumps(user_data, indent=4)}
 
         **Réponse** :
         """
+    else:
+        raise ValueError("Unsupported language")
 
-
-def rewrite_section(previous_response, feedback, question, user_data, options):
+def integrate_document_content_with_grant_writing(question, user_data):
     """
-    Regenerate a response based on user feedback.
-    """
-    updated_prompt = f"""
-    The user provided the following feedback to improve the previous response:
-    "{feedback}"
-
-    **Original Question**:
-    {question}
-
-    **Original Response**:
-    {previous_response}
-
-    Use this feedback to refine the response while adhering to the original requirements.
-
-    **User Data**:
-    {json.dumps(user_data, indent=4)}
-
-    **Options**:
-    {options or "Not provided"}
-
-    **Improved Response**:
-    """
-    return updated_prompt
-
-
-def integrate_document_content_with_grant_writing(
-    action, question, user_data, options, feedback=None, previous_response=None
-):
-    """
-    Handles the grant-writing process including regenerations.
+    Generate a response to the given question using the user data.
     """
     language = detect_language(question)
-
-    if action == "generate":
-        prompt = generate_prompt(language, question, user_data, options)
-    elif action == "regenerate" and feedback and previous_response:
-        prompt = rewrite_section(previous_response, feedback, question, user_data, options)
-    else:
-        return "Invalid action or missing feedback for regeneration."
-
+    prompt = generate_prompt(language, question, user_data)
+    
+    logger.info(f"Generated prompt: {prompt}")
+    
     # Prepare request body for the AI model
     model_id = "us.meta.llama3-2-90b-instruct-v1:0"
     body = json.dumps(
@@ -174,29 +128,45 @@ def integrate_document_content_with_grant_writing(
         return cleaned_text
     except ClientError as err:
         message = err.response["Error"]["Message"]
-        logger.error("A client error occurred: %s", message)
+        logger.error(f"A client error occurred: {message}")
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
     return None
 
-
 def lambda_handler(event, context):
-    """
-    Main AWS Lambda handler function.
-    """
-    if "body" in event and event["body"]:
-        event = json.loads(event["body"])
+    try:
+        # Check if the 'body' field exists and is not None
+        if "body" in event and event["body"]:
+            # Assume 'body' is JSON-encoded and parse it
+            event = json.loads(event["body"])
 
-    action = event.get("action", "generate")
-    question = event.get("question")
-    user_data = event.get("user_data")
-    options = event.get("options", None)
-    feedback = event.get("feedback", None)
-    previous_response = event.get("previous_response", None)
+        # Extract parameters from the event
+        question = event.get("question")
+        api_url = event.get("api_url")
 
-    response = integrate_document_content_with_grant_writing(
-        action, question, user_data, options, feedback, previous_response
-    )
+        if not question or not api_url:
+            return {"statusCode": 400, "body": "Missing 'question' or 'api_url' in request"}
 
-    return {"statusCode": 200, "body": json.dumps(response)}
+        # Fetch user data from the API
+        user_data = fetch_user_data(api_url)
+
+        if not user_data:
+            return {"statusCode": 500, "body": "Failed to fetch user data"}
+
+        # Generate response based on the question and user data
+        response_text = integrate_document_content_with_grant_writing(
+            question=question,
+            user_data=user_data
+        )
+
+        # Return the response text
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"result": response_text})
+        }
+
+    except Exception as e:
+        logger.error(f"Unexpected error in lambda_handler: {e}")
+        return {"statusCode": 500, "body": str(e)}
+
 
