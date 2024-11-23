@@ -276,6 +276,10 @@ def integrate_document_content_with_grant_writing(
 
 
 def lambda_handler(event, context):
+    # Check if the 'body' field exists and is not None
+    if "body" in event and event["body"]:
+        # Assume 'body' is JSON-encoded and parse it
+        event = json.loads(event["body"])
 
     question = event.get("question")
     user_data = event.get("user_data")
