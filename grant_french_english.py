@@ -60,11 +60,33 @@ def generate_text(model_id, body):
     return response_body
 
 
+# def clean_response(response_text):
+#     """
+#     Removes any unwanted special tokens like <<SYS>> from the response.
+#     """
+#     return response_text.replace("[/SYS]", "").replace("<<SYS>>", "").strip()
+#     # Clean response
+
+
 def clean_response(response_text):
     """
     Removes any unwanted special tokens like <<SYS>> from the response.
     """
-    return response_text.replace("[/SYS]", "").replace("<<SYS>>", "").strip()
+    # res = response_text.replace("[/SYS]", "").strip()
+    # return res.replace("<<SYS>>", "").strip()
+    # Define the pattern with case-insensitive flag
+
+    # print(response_text)
+
+    res = response_text.split("\n", 1)
+    if len(res) > 1:
+        res = res[1].strip()
+    else:
+        res = res[0].strip()  # Fallback if '\n' is not found
+    res = res.replace("Response:", "").strip()
+    res = res.replace("**Response**:", "").strip()
+
+    return res
 
 
 def extract_text_from_pdf(file_path):
@@ -133,22 +155,37 @@ def process_uploaded_document(file_path):
         return f"Unsupported file type: {file_type}"
 
 
-def generate_prompt(language, question, user_data, document_text):
+def generate_prompt(language, question, user_data, document_text, options=None):
     """
     Generate the input prompt for the AI model in the appropriate language.
     """
     if language == "en":
         return f"""
-        You are an expert grant-writing AI. Based on the provided business information and document, generate a professional and compelling response to the question below:
+        You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information**, **Supplemental Document**, and **Options**.
 
-        Question: {question}
+        - The **Business Information** is provided as a JSON file containing the personal and business details of the applicant.
+        - The **Supplemental Document** is optional and may include additional information extracted from files (e.g., PDFs, Word documents).
+        - The **Options** field is optional. If it exists, select the most appropriate answer from the options provided. 
 
-        Business Information:
+        **Guidelines for Answer Generation**:
+        1. If **Options** are provided, select the most relevant option as the answer, reply with only the option, do not add any additional words or symbols.
+        2. If the question seeks specific information (e.g., a date, address, or event), provide a precise and accurate response.
+        3. For general questions, craft a detailed, compelling, and professional response, incorporating all relevant information.
+        4. **Deliver your response in English as a polished and clear narrative.** The response should be a single, plain paragraph **without any special symbols, introductory phrases, or additional comments.**
+
+        **Question**:
+        {question}
+        
+        **Options**:
+        {options or "Not provided"}
+
+        **Business Information**:
         {json.dumps(user_data, indent=4)}
 
-        Supplemental Document:
-        {document_text}
+        **Supplemental Document**:
+        {document_text or "Not provided"}
         """
+
     elif language == "fr":
         return f"""
         Vous êtes une IA experte en rédaction de subventions. En vous basant sur les informations commerciales et le document fournis, générez une réponse professionnelle et convaincante à la question ci-dessous :
@@ -163,7 +200,9 @@ def generate_prompt(language, question, user_data, document_text):
         """
 
 
-def integrate_document_content_with_grant_writing(question, user_data, file_paths):
+def integrate_document_content_with_grant_writing(
+    question, user_data, file_paths, options=None
+):
     """
     Integrates document content into the grant-writing process.
     """
@@ -174,20 +213,26 @@ def integrate_document_content_with_grant_writing(question, user_data, file_path
 
     combined_document_text = "\n\n".join(document_texts)
     language = detect_language(question)
-    prompt = generate_prompt(language, question, user_data, combined_document_text)
+    prompt = generate_prompt(
+        language, question, user_data, combined_document_text, options
+    )
+
+    print(prompt)
 
     # Prepare request body for the AI model
     model_id = "us.meta.llama3-2-90b-instruct-v1:0"
-    body = json.dumps({
-        "prompt": prompt,
-        "max_gen_len": 300,
-        "temperature": 0.7,
-        "top_p": 0.9,
-    })
+    body = json.dumps(
+        {
+            "prompt": prompt,
+            "max_gen_len": 300,
+            "temperature": 0.6,
+            # "top_p": 0.9,
+        }
+    )
 
     try:
         response = generate_text(model_id, body)
-        generated_text = response.get('generation', '')
+        generated_text = response.get("generation", "")
         cleaned_text = clean_response(generated_text)
         return cleaned_text
     except ClientError as err:
@@ -200,7 +245,9 @@ def integrate_document_content_with_grant_writing(question, user_data, file_path
 
 if __name__ == "__main__":
     # API Endpoint
-    user_api_url = "https://api.happly.ai/api/v1/portal/users/ba845892-3275-47a3-9327-fcf7cba266a6"
+    user_api_url = (
+        "https://api.happly.ai/api/v1/portal/users/ba845892-3275-47a3-9327-fcf7cba266a6"
+    )
     headers = {
         "Authorization": "Bearer YOUR_API_KEY"  # Replace with the actual API key
     }
@@ -211,12 +258,26 @@ if __name__ == "__main__":
         print("Failed to fetch user data. Exiting.")
         exit()
 
-    # Example Question
-    question = "Describe your propduct"  # English example
+    # # Example Question1
+    # question = "Describe your propduct"  # English example
+    # options = None
+
+    # Example Question2
+    # question = "What is the name of your company?"  # English example
+    # options = None
+
+    # Example Question3
+    question = "When was the company registered?"  # English example
+    options = ["2021", "2022", "2023"]
+    options = None
 
     # Path to the uploaded PDF document
-    uploaded_files = ["/Users/chasesimard/Documents/Happly/Govago Business Plan.pdf"]
+    uploaded_files = ["./Govago Business Plan.pdf"]
+
+    # Options that might be used for the question
 
     # Generate Response
-    response = integrate_document_content_with_grant_writing(question, user_data, uploaded_files)
+    response = integrate_document_content_with_grant_writing(
+        question, user_data, uploaded_files, options
+    )
     print("Generated Grant Response:\n", response)
