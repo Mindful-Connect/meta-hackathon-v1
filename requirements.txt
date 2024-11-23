@@ -1,0 +1,8 @@
+boto3
+botocore
+langdetect
+PyPDF2
+python-docx
+pillow
+pytesseract
+requests
