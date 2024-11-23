@@ -163,15 +163,21 @@ def generate_prompt(language, question, user_data, document_text, options):
         return f"""
         You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information**, **Supplemental Document**, and **Options**.
 
-        - The **Business Information** is provided as a JSON file containing the personal and business details of the applicant.
-        - The **Supplemental Document** is optional and may include additional information extracted from files (e.g., PDFs, Word documents).
-        - The **Options** field is optional. If it exists, select the most appropriate answer from the options provided. 
+        - **Business Information**: Provided as a JSON file containing the personal and business details of the applicant.
+        - **Supplemental Document**: Optional additional information extracted from files (e.g., PDFs, Word documents).
+        - **Options**: Optional field. If present, the answer must be one of these options only.
 
-        **Guidelines for Answer Generation**:
-        1. If **Options** are provided, select the most relevant option as the answer, reply with only the option, do not add any additional words or symbols.
-        2. If the question seeks specific information (e.g., a date, address, or event), provide a precise and accurate response.
-        3. For general questions, craft a detailed, compelling, and professional response, incorporating all relevant information.
-        4. **Deliver your response in English as a polished and clear narrative.** The response should be a single, plain paragraph **without any special symbols, introductory phrases, or additional comments.**
+        **Instructions**:
+        1. **If Options are provided**:
+            - **Output only the exact text of the most appropriate option**.
+            - **Do not include any additional words, sentences, or symbols**.
+        2. **If Options are not provided**:
+            - **For specific information requests** (e.g., dates, addresses), provide a precise and accurate response without extra commentary.
+            - **For general questions**, craft a detailed, compelling, and professional single-paragraph response using all relevant information.
+        3. **Formatting**:
+            - **Respond in English**.
+            - **Use a single, plain paragraph**.
+            - **Do not include special symbols, introductory phrases, or additional comments**.
 
         **Question**:
         {question}
@@ -181,36 +187,46 @@ def generate_prompt(language, question, user_data, document_text, options):
 
         **Business Information**:
         {json.dumps(user_data, indent=4)}
-
+        
         **Supplemental Document**:
         {document_text or "Not provided"}
+
+        **Response**:
         """
 
     elif language == "fr":
         return f"""
-        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'Entreprise**, le **Document Supplémentaire** et les **Options** fournies.
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'entreprise**, le **Document supplémentaire** et les **Options** fournies.
 
-        - Les **Informations sur l'Entreprise** sont fournies sous forme de fichier JSON contenant les détails personnels et professionnels du demandeur.
-        - Le **Document Supplémentaire** est facultatif et peut inclure des informations supplémentaires extraites de fichiers (par exemple, PDF, documents Word).
-        - Le champ **Options** est facultatif. S'il existe, sélectionnez la réponse la plus appropriée parmi les options fournies. 
+        - **Informations sur l'entreprise** : Fournies sous forme de fichier JSON contenant les détails personnels et commerciaux du demandeur.
+        - **Document supplémentaire** : Informations supplémentaires optionnelles extraites de fichiers (par exemple, PDF, documents Word).
+        - **Options** : Champ optionnel. Si présent, la réponse doit être uniquement l'une de ces options.
 
-        **Directives pour la Génération des Réponses**:
-        1. Si des **Options** sont fournies, sélectionnez l'option la plus pertinente comme réponse, répondez uniquement avec l'option, n'ajoutez aucun mot ou symbole supplémentaire.
-        2. Si la question demande des informations spécifiques (par exemple, une date, une adresse ou un événement), fournissez une réponse précise et exacte.
-        3. Pour les questions générales, élaborez une réponse détaillée, convaincante et professionnelle, en incorporant toutes les informations pertinentes.
-        4. **Fournissez votre réponse en français sous forme d'un récit poli et clair.** La réponse doit être un paragraphe unique et simple **sans aucun symbole spécial, phrases introductrices ou commentaires supplémentaires.**
+        **Instructions** :
+        1. **Si des options sont fournies** :
+            - **Fournissez uniquement le texte exact de l'option la plus appropriée**.
+            - **N'incluez aucun mot, phrase ou symbole supplémentaire**.
+        2. **Si les options ne sont pas fournies** :
+            - **Pour les demandes d'informations spécifiques** (par exemple, dates, adresses), fournissez une réponse précise et exacte sans commentaire supplémentaire.
+            - **Pour les questions générales**, rédigez une réponse détaillée, convaincante et professionnelle en un seul paragraphe en utilisant toutes les informations pertinentes.
+        3. **Formatage** :
+            - **Répondez en français**.
+            - **Utilisez un seul paragraphe simple**.
+            - **N'incluez pas de symboles spéciaux, de phrases introductives ou de commentaires supplémentaires**.
 
-        **Question**:
+        **Question** :
         {question}
-        
-        **Options**:
+
+        **Options** :
         {options or "Non fourni"}
 
-        **Informations sur l'Entreprise**:
+        **Informations sur l'entreprise** :
         {json.dumps(user_data, indent=4)}
 
-        **Document Supplémentaire**:
+        **Document supplémentaire** :
         {document_text or "Non fourni"}
+
+        **Réponse** :
         """
 
 
@@ -242,7 +258,7 @@ def integrate_document_content_with_grant_writing(
         {
             "prompt": prompt,
             "max_gen_len": 300,
-            "temperature": 0.3,
+            "temperature": 0.5,
             # "top_p": 0.9,
         }
     )
@@ -276,16 +292,16 @@ if __name__ == "__main__":
         exit()
 
     # # Example Question1
-    # question = "Describe your propduct"  # English example
-    # options = None
+    question = "Describe your propduct"  # English example
+    options = None
 
     # Example Question2
     # question = "What is the name of the company?"  # English example
     # options = None
 
     # Example Question3
-    question = "When was the company registered?"  # English example
-    options = ["2021", "2022", "2023"]
+    # question = "When was the company registered?"  # English example
+    # # options = ["2021", "2022", "2023"]
     # options = None
 
     # Path to the uploaded PDF document
