@@ -2,6 +2,7 @@ import json
 import logging
 import requests
 import boto3
+import base64
 from langdetect import detect, DetectorFactory
 from botocore.exceptions import ClientError
 
@@ -13,23 +14,22 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Hardcoded API Endpoint
-API_URL = "https://api.happly.ai/api/v1/portal/users/ba845892-3275-47a3-9327-fcf7cba266a6"
+API_URL = "https://api.happly.ai/api/v1/portal/users/"
 
-
-def fetch_user_data():
+def fetch_user_data(client_id=None):
     """
-    Fetch user data from the hardcoded API endpoint.
+    Fetch user data from the API endpoint. Use default profile if client_id is not provided.
     """
+    url = API_URL + (client_id if client_id else "default-profile-id")
     try:
-        response = requests.get(API_URL)
+        response = requests.get(url)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred: {http_err}")
     except Exception as e:
-        logger.error(f"Error fetching user data from API ({API_URL}): {e}")
+        logger.error(f"Error fetching user data from API ({url}): {e}")
     return {}
-
 
 def detect_language(text):
     """
@@ -43,7 +43,6 @@ def detect_language(text):
     except Exception as e:
         logger.warning(f"Language detection failed: {e}")
         return "en"  # Default to English if detection fails
-
 
 def generate_text(model_id, body):
     """
@@ -59,7 +58,6 @@ def generate_text(model_id, body):
     response_body = json.loads(response.get("body").read())
     return response_body
 
-
 def clean_response(response_text):
     """
     Cleans unwanted characters or system tokens from the response.
@@ -73,17 +71,27 @@ def clean_response(response_text):
     res = res.replace("**Response**:", "").strip()
     return res
 
+def decode_document_content(encoded_content):
+    """
+    Decodes Base64-encoded document content.
+    """
+    try:
+        decoded_content = base64.b64decode(encoded_content)
+        return decoded_content.decode('utf-8', errors='replace')  # Replace invalid characters
+    except Exception as e:
+        logger.error(f"Error decoding document content: {e}")
+        return None
 
-def generate_prompt(language, question, user_data, options, rewrite=None):
+def generate_prompt(language, question, user_data, document_text=None, options=None, rewrite=None):
     """
     Generate the input prompt for the AI model in the appropriate language.
     If `rewrite` is provided, it is used as context for rewriting.
     """
     context = f"Rewrite context: {rewrite}" if rewrite else ""
-    
+
     if language == "en":
         return f"""
-        You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information** and **Options**.
+        You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information**, **Options**, and **Document Text**.
 
         **Instructions**:
         1. If options are provided:
@@ -98,11 +106,12 @@ def generate_prompt(language, question, user_data, options, rewrite=None):
         **Question**: {question}
         **Options**: {options or "Not provided"}
         **Business Information**: {json.dumps(user_data, indent=4)}
+        **Document Text**: {document_text or "Not provided"}
         **Response**:
         """
     elif language == "fr":
         return f"""
-        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'entreprise** et les **Options**.
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'entreprise**, les **Options** et le **Texte du document**.
 
         **Instructions**:
         1. Si des options sont fournies :
@@ -117,17 +126,17 @@ def generate_prompt(language, question, user_data, options, rewrite=None):
         **Question** : {question}
         **Options** : {options or "Non fourni"}
         **Informations sur l'entreprise** : {json.dumps(user_data, indent=4)}
+        **Texte du document** : {document_text or "Non fourni"}
         **Réponse** :
         """
 
-
-def integrate_content_with_grant_writing(question, user_data, options, rewrite=None):
+def integrate_content_with_grant_writing(question, user_data, document_text=None, options=None, rewrite=None):
     """
     Generate a response to a question using user data.
-    Handles rewrites by including additional context.
+    Handles rewrites by including additional context and optionally includes document text.
     """
     language = detect_language(question)
-    prompt = generate_prompt(language, question, user_data, options, rewrite)
+    prompt = generate_prompt(language, question, user_data, document_text, options, rewrite)
 
     logger.info(f"Generated Prompt: {prompt}")
 
@@ -151,7 +160,6 @@ def integrate_content_with_grant_writing(question, user_data, options, rewrite=N
         logger.error(f"Unexpected error: {e}")
     return None
 
-
 def lambda_handler(event, context):
     """
     AWS Lambda handler function.
@@ -159,11 +167,14 @@ def lambda_handler(event, context):
     if "body" in event and event["body"]:
         event = json.loads(event["body"])
 
+    client_id = event.get("client_id", None)
     question = event.get("question")
+    document_content = event.get("document_content", None)
     options = event.get("options", None)
     rewrite = event.get("rewrite", None)
 
-    user_data = fetch_user_data()
+    # Fetch user data based on client ID or default profile
+    user_data = fetch_user_data(client_id)
 
     if not user_data:
         return {
@@ -171,8 +182,21 @@ def lambda_handler(event, context):
             "body": "Failed to fetch user data"
         }
 
+    # Decode the document content if provided
+    document_text = None
+    if document_content:
+        document_text = decode_document_content(document_content)
+        if document_text is None:
+            return {
+                "statusCode": 400,
+                "body": "Invalid document content"
+            }
+
     try:
-        response = integrate_content_with_grant_writing(question, user_data, options, rewrite)
+        # Pass the document_text as context
+        response = integrate_content_with_grant_writing(
+            question, user_data, document_text, options, rewrite
+        )
         return {
             "statusCode": 200,
             "body": json.dumps({"response": response})
@@ -183,5 +207,6 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "body": "An error occurred"
         }
+
 
 
