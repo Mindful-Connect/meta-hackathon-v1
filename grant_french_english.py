@@ -199,7 +199,7 @@ def lambda_handler(event, context):
         )
         return {
             "statusCode": 200,
-            "body": json.dumps({"response": response})
+            "body": json.dumps(response)
         }
     except Exception as e:
         logger.error(f"Unexpected error in lambda_handler: {e}")
