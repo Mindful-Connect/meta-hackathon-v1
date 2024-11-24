@@ -74,10 +74,13 @@ def clean_response(response_text):
     return res
 
 
-def generate_prompt(language, question, user_data, options):
+def generate_prompt(language, question, user_data, options, rewrite=None):
     """
     Generate the input prompt for the AI model in the appropriate language.
+    If `rewrite` is provided, it is used as context for rewriting.
     """
+    context = f"Rewrite context: {rewrite}" if rewrite else ""
+    
     if language == "en":
         return f"""
         You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information** and **Options**.
@@ -89,6 +92,8 @@ def generate_prompt(language, question, user_data, options):
         2. If options are not provided:
            - Provide a precise and accurate response without extra commentary.
            - Craft a detailed, compelling, and professional single-paragraph response using all relevant information.
+
+        **{context}**
 
         **Question**: {question}
         **Options**: {options or "Not provided"}
@@ -107,6 +112,8 @@ def generate_prompt(language, question, user_data, options):
            - Fournissez une réponse précise et exacte sans commentaire supplémentaire.
            - Rédigez une réponse détaillée, convaincante et professionnelle en un seul paragraphe en utilisant toutes les informations pertinentes.
 
+        **{context}**
+
         **Question** : {question}
         **Options** : {options or "Non fourni"}
         **Informations sur l'entreprise** : {json.dumps(user_data, indent=4)}
@@ -114,12 +121,13 @@ def generate_prompt(language, question, user_data, options):
         """
 
 
-def integrate_content_with_grant_writing(question, user_data, options):
+def integrate_content_with_grant_writing(question, user_data, options, rewrite=None):
     """
     Generate a response to a question using user data.
+    Handles rewrites by including additional context.
     """
     language = detect_language(question)
-    prompt = generate_prompt(language, question, user_data, options)
+    prompt = generate_prompt(language, question, user_data, options, rewrite)
 
     logger.info(f"Generated Prompt: {prompt}")
 
@@ -153,6 +161,7 @@ def lambda_handler(event, context):
 
     question = event.get("question")
     options = event.get("options", None)
+    rewrite = event.get("rewrite", None)
 
     user_data = fetch_user_data()
 
@@ -163,10 +172,10 @@ def lambda_handler(event, context):
         }
 
     try:
-        response = integrate_content_with_grant_writing(question, user_data, options)
+        response = integrate_content_with_grant_writing(question, user_data, options, rewrite)
         return {
             "statusCode": 200,
-            "body": response
+            "body": json.dumps({"response": response})
         }
     except Exception as e:
         logger.error(f"Unexpected error in lambda_handler: {e}")
@@ -174,4 +183,5 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "body": "An error occurred"
         }
+
 
