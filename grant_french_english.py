@@ -1,19 +1,20 @@
 import json
 import logging
 import requests
-from langdetect import detect, DetectorFactory
 import boto3
+from langdetect import detect, DetectorFactory
 from botocore.exceptions import ClientError
 
-# Set up consistent language detection
+# Ensure consistent results from langdetect
 DetectorFactory.seed = 0
 
-# Configure logging
+# Set up logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Hardcoded API endpoint
+# Hardcoded API Endpoint
 API_URL = "https://api.happly.ai/api/v1/portal/users/ba845892-3275-47a3-9327-fcf7cba266a6"
+
 
 def fetch_user_data():
     """
@@ -26,12 +27,13 @@ def fetch_user_data():
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred: {http_err}")
     except Exception as e:
-        logger.error(f"Error fetching user data from API: {e}")
+        logger.error(f"Error fetching user data from API ({API_URL}): {e}")
     return {}
+
 
 def detect_language(text):
     """
-    Detect the language of a given text.
+    Detects the language of a given text.
     """
     try:
         language = detect(text)
@@ -42,9 +44,10 @@ def detect_language(text):
         logger.warning(f"Language detection failed: {e}")
         return "en"  # Default to English if detection fails
 
+
 def generate_text(model_id, body):
     """
-    Generate text using a Bedrock AI model.
+    Generate text using Meta Llama 3.2 Chat on demand.
     """
     bedrock = boto3.client(service_name="bedrock-runtime", region_name="us-east-1")
     response = bedrock.invoke_model(
@@ -56,78 +59,101 @@ def generate_text(model_id, body):
     response_body = json.loads(response.get("body").read())
     return response_body
 
+
 def clean_response(response_text):
     """
-    Removes any unwanted special tokens like <<SYS>> from the response.
+    Cleans unwanted characters or system tokens from the response.
     """
-    return response_text.replace("[/SYS]", "").replace("<<SYS>>", "").strip()
+    res = response_text.split("\n", 1)
+    if len(res) > 1:
+        res = res[1].strip()
+    else:
+        res = res[0].strip()  # Fallback if '\n' is not found
+    res = res.replace("Response:", "").strip()
+    res = res.replace("**Response**:", "").strip()
+    return res
 
-def generate_prompt(language, question, user_data):
+
+def generate_prompt(language, question, user_data, options):
     """
     Generate the input prompt for the AI model in the appropriate language.
     """
     if language == "en":
         return f"""
-        You are an expert at generating precise, professional answers to grant application questions.
+        You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information** and **Options**.
 
-        **Question**:
-        {question}
+        **Instructions**:
+        1. If options are provided:
+           - Output only the exact text of the most appropriate option.
+           - Do not include any additional words, sentences, or symbols.
+        2. If options are not provided:
+           - Provide a precise and accurate response without extra commentary.
+           - Craft a detailed, compelling, and professional single-paragraph response using all relevant information.
 
-        **User Data**:
-        {json.dumps(user_data, indent=4)}
-
+        **Question**: {question}
+        **Options**: {options or "Not provided"}
+        **Business Information**: {json.dumps(user_data, indent=4)}
         **Response**:
         """
     elif language == "fr":
         return f"""
-        Vous êtes un expert en réponses précises et professionnelles pour les demandes de subventions.
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'entreprise** et les **Options**.
 
-        **Question** :
-        {question}
+        **Instructions**:
+        1. Si des options sont fournies :
+           - Fournissez uniquement le texte exact de l'option la plus appropriée.
+           - N'incluez aucun mot, phrase ou symbole supplémentaire.
+        2. Si des options ne sont pas fournies :
+           - Fournissez une réponse précise et exacte sans commentaire supplémentaire.
+           - Rédigez une réponse détaillée, convaincante et professionnelle en un seul paragraphe en utilisant toutes les informations pertinentes.
 
-        **Données utilisateur** :
-        {json.dumps(user_data, indent=4)}
-
+        **Question** : {question}
+        **Options** : {options or "Non fourni"}
+        **Informations sur l'entreprise** : {json.dumps(user_data, indent=4)}
         **Réponse** :
         """
 
-def integrate_content_with_grant_writing(question, user_data):
+
+def integrate_content_with_grant_writing(question, user_data, options):
     """
-    Generate a response to the question based on user data.
+    Generate a response to a question using user data.
     """
     language = detect_language(question)
-    prompt = generate_prompt(language, question, user_data)
+    prompt = generate_prompt(language, question, user_data, options)
 
-    # Prepare the request body for the AI model
+    logger.info(f"Generated Prompt: {prompt}")
+
     model_id = "us.meta.llama3-2-90b-instruct-v1:0"
-    body = json.dumps({
-        "prompt": prompt,
-        "max_gen_len": 300,
-        "temperature": 0.7,
-    })
+    body = json.dumps(
+        {
+            "prompt": prompt,
+            "max_gen_len": 300,
+            "temperature": 0.7,
+        }
+    )
 
-    # Generate the response
     try:
-        raw_response = generate_text(model_id, body)
-        generated_text = raw_response.get("generation", "")
-        cleaned_text = clean_response(generated_text)
-        return cleaned_text
+        response = generate_text(model_id, body)
+        generated_text = response.get("generation", "")
+        return clean_response(generated_text)
     except ClientError as err:
         message = err.response["Error"]["Message"]
         logger.error(f"A client error occurred: {message}")
-        return "An error occurred while generating the response."
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        return "An unexpected error occurred."
+    return None
+
 
 def lambda_handler(event, context):
-    # Parse the input
+    """
+    AWS Lambda handler function.
+    """
     if "body" in event and event["body"]:
         event = json.loads(event["body"])
 
     question = event.get("question")
+    options = event.get("options", None)
 
-    # Fetch user data
     user_data = fetch_user_data()
 
     if not user_data:
@@ -136,12 +162,11 @@ def lambda_handler(event, context):
             "body": "Failed to fetch user data"
         }
 
-    # Generate the response
     try:
-        response = integrate_content_with_grant_writing(question, user_data)
+        response = integrate_content_with_grant_writing(question, user_data, options)
         return {
             "statusCode": 200,
-            "body": response  # Return the response as plain text
+            "body": response
         }
     except Exception as e:
         logger.error(f"Unexpected error in lambda_handler: {e}")
@@ -149,5 +174,4 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "body": "An error occurred"
         }
-
 
