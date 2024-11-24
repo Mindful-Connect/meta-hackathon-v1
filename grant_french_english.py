@@ -2,7 +2,6 @@ import json
 import logging
 import requests
 import boto3
-import base64
 from langdetect import detect, DetectorFactory
 from botocore.exceptions import ClientError
 
@@ -11,7 +10,7 @@ DetectorFactory.seed = 0
 
 # Set up logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.INFO)
 
 # Hardcoded API Endpoint
 API_URL = "https://api.happly.ai/api/v1/portal/users/"
@@ -66,21 +65,8 @@ def clean_response(response_text):
     if len(res) > 1:
         res = res[1].strip()
     else:
-        res = res[0].strip()  # Fallback if '\n' is not found
-    res = res.replace("Response:", "").strip()
-    res = res.replace("**Response**:", "").strip()
+        res = res[0].strip()
     return res
-
-def decode_document_content(encoded_content):
-    """
-    Decodes Base64-encoded document content.
-    """
-    try:
-        decoded_content = base64.b64decode(encoded_content)
-        return decoded_content.decode('utf-8', errors='replace')  # Replace invalid characters
-    except Exception as e:
-        logger.error(f"Error decoding document content: {e}")
-        return None
 
 def generate_prompt(language, question, user_data, document_text=None, options=None, rewrite=None):
     """
@@ -132,7 +118,7 @@ def generate_prompt(language, question, user_data, document_text=None, options=N
 
 def integrate_content_with_grant_writing(question, user_data, document_text=None, options=None, rewrite=None):
     """
-    Generate a response to a question using user data.
+    Generate a response to a question using user data, document text, and options.
     Handles rewrites by including additional context and optionally includes document text.
     """
     language = detect_language(question)
@@ -156,9 +142,10 @@ def integrate_content_with_grant_writing(question, user_data, document_text=None
     except ClientError as err:
         message = err.response["Error"]["Message"]
         logger.error(f"A client error occurred: {message}")
+        return "Error in generating response"
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-    return None
+        return "Error in generating response"
 
 def lambda_handler(event, context):
     """
@@ -169,7 +156,7 @@ def lambda_handler(event, context):
 
     client_id = event.get("client_id", None)
     question = event.get("question")
-    document_content = event.get("document_content", None)
+    document_text = event.get("document_text", None)
     options = event.get("options", None)
     rewrite = event.get("rewrite", None)
 
@@ -182,24 +169,14 @@ def lambda_handler(event, context):
             "body": "Failed to fetch user data"
         }
 
-    # Decode the document content if provided
-    document_text = None
-    if document_content:
-        document_text = decode_document_content(document_content)
-        if document_text is None:
-            return {
-                "statusCode": 400,
-                "body": "Invalid document content"
-            }
-
     try:
-        # Pass the document_text as context
+        # Generate response
         response = integrate_content_with_grant_writing(
             question, user_data, document_text, options, rewrite
         )
         return {
             "statusCode": 200,
-            "body": json.dumps(response)
+            "body": response
         }
     except Exception as e:
         logger.error(f"Unexpected error in lambda_handler: {e}")
@@ -207,6 +184,8 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "body": "An error occurred"
         }
+
+
 
 
 
