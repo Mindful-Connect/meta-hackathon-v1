@@ -3,33 +3,32 @@ import logging
 import requests
 import boto3
 from langdetect import detect, DetectorFactory
-from PyPDF2 import PdfReader
-from docx import Document
-from PIL import Image
-import pytesseract
 from botocore.exceptions import ClientError
 
 # Ensure consistent results from langdetect
 DetectorFactory.seed = 0
 
+# Set up logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+logger.setLevel(logging.INFO)
 
+# Hardcoded API Endpoint
+API_URL = "https://api.happly.ai/api/v1/portal/users/"
 
-def fetch_user_data(api_url, headers=None):
+def fetch_user_data(client_id=None):
     """
-    Fetch user data from the provided API endpoint.
+    Fetch user data from the API endpoint. Use default profile if client_id is not provided.
     """
+    url = API_URL + (client_id if client_id else "default-profile-id")
     try:
-        response = requests.get(api_url, headers=headers)
+        response = requests.get(url)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred: {http_err}")
     except Exception as e:
-        logger.error(f"Error fetching user data from API ({api_url}): {e}")
+        logger.error(f"Error fetching user data from API ({url}): {e}")
     return {}
-
 
 def detect_language(text):
     """
@@ -43,7 +42,6 @@ def detect_language(text):
     except Exception as e:
         logger.warning(f"Language detection failed: {e}")
         return "en"  # Default to English if detection fails
-
 
 def generate_text(model_id, body):
     """
@@ -59,164 +57,131 @@ def generate_text(model_id, body):
     response_body = json.loads(response.get("body").read())
     return response_body
 
-
 def clean_response(response_text):
     """
-    Removes any unwanted special tokens like <<SYS>> from the response.
+    Cleans unwanted characters or system tokens from the response.
     """
-    return response_text.replace("[/SYS]", "").replace("<<SYS>>", "").strip()
-
-
-def extract_text_from_pdf(file_path):
-    """
-    Extracts and cleans text from a PDF file.
-    """
-    try:
-        reader = PdfReader(file_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-        return clean_extracted_text(text)
-    except Exception as e:
-        logger.error(f"Error reading PDF: {e}")
-        return ""
-
-
-def extract_text_from_docx(file_path):
-    """
-    Extracts and cleans text from a .docx Word document.
-    """
-    try:
-        doc = Document(file_path)
-        text = []
-        for paragraph in doc.paragraphs:
-            text.append(paragraph.text)
-        return clean_extracted_text("\n".join(text))
-    except Exception as e:
-        logger.error(f"Error reading Word document: {e}")
-        return ""
-
-
-def extract_text_from_image(file_path):
-    """
-    Extracts and cleans text from an image file using OCR.
-    """
-    try:
-        image = Image.open(file_path)
-        raw_text = pytesseract.image_to_string(image)
-        return clean_extracted_text(raw_text)
-    except Exception as e:
-        logger.error(f"Error reading image: {e}")
-        return ""
-
-
-def clean_extracted_text(text):
-    """
-    Cleans extracted text to remove artifacts like extra spaces, line breaks, and formatting.
-    """
-    return "\n".join([line.strip() for line in text.splitlines() if line.strip()])
-
-
-def process_uploaded_document(file_path):
-    """
-    Processes an uploaded document and extracts cleaned text based on its type.
-    """
-    file_type = file_path.split(".")[-1].lower()
-
-    if file_type == "pdf":
-        return extract_text_from_pdf(file_path)
-    elif file_type == "docx":
-        return extract_text_from_docx(file_path)
-    elif file_type in ["png", "jpg", "jpeg"]:
-        return extract_text_from_image(file_path)
+    res = response_text.split("\n", 1)
+    if len(res) > 1:
+        res = res[1].strip()
     else:
-        return f"Unsupported file type: {file_type}"
+        res = res[0].strip()
+    return res
 
-
-def generate_prompt(language, question, user_data, document_text):
+def generate_prompt(language, question, user_data, document_text=None, options=None, rewrite=None):
     """
     Generate the input prompt for the AI model in the appropriate language.
+    If `rewrite` is provided, it is used as context for rewriting.
     """
+    context = f"Rewrite context: {rewrite}" if rewrite else ""
+
     if language == "en":
         return f"""
-        You are an expert grant-writing AI. Based on the provided business information and document, generate a professional and compelling response to the question below:
+        You are an expert at generating precise, professional, and compelling answers to grant application questions based on the provided **Business Information**, **Options**, and **Document Text**.
 
-        Question: {question}
+        **Instructions**:
+        1. If options are provided:
+           - Output only the exact text of the most appropriate option.
+           - Do not include any additional words, sentences, or symbols.
+        2. If options are not provided:
+           - Provide a precise and accurate response without extra commentary.
+           - Craft a detailed, compelling, and professional single-paragraph response using all relevant information.
 
-        Business Information:
-        {json.dumps(user_data, indent=4)}
+        **{context}**
 
-        Supplemental Document:
-        {document_text}
+        **Question**: {question}
+        **Options**: {options or "Not provided"}
+        **Business Information**: {json.dumps(user_data, indent=4)}
+        **Document Text**: {document_text or "Not provided"}
+        **Response**:
         """
     elif language == "fr":
         return f"""
-        Vous êtes une IA experte en rédaction de subventions. En vous basant sur les informations commerciales et le document fournis, générez une réponse professionnelle et convaincante à la question ci-dessous :
+        Vous êtes un expert dans la génération de réponses précises, professionnelles et convaincantes aux questions de demande de subvention basées sur les **Informations sur l'entreprise**, les **Options** et le **Texte du document**.
 
-        Question : {question}
+        **Instructions**:
+        1. Si des options sont fournies :
+           - Fournissez uniquement le texte exact de l'option la plus appropriée.
+           - N'incluez aucun mot, phrase ou symbole supplémentaire.
+        2. Si des options ne sont pas fournies :
+           - Fournissez une réponse précise et exacte sans commentaire supplémentaire.
+           - Rédigez une réponse détaillée, convaincante et professionnelle en un seul paragraphe en utilisant toutes les informations pertinentes.
 
-        Informations commerciales :
-        {json.dumps(user_data, indent=4)}
+        **{context}**
 
-        Document supplémentaire :
-        {document_text}
+        **Question** : {question}
+        **Options** : {options or "Non fourni"}
+        **Informations sur l'entreprise** : {json.dumps(user_data, indent=4)}
+        **Texte du document** : {document_text or "Non fourni"}
+        **Réponse** :
         """
 
-
-def integrate_document_content_with_grant_writing(question, user_data, file_paths):
+def integrate_content_with_grant_writing(question, user_data, document_text=None, options=None, rewrite=None):
     """
-    Integrates document content into the grant-writing process.
+    Generate a response to a question using user data, document text, and options.
+    Handles rewrites by including additional context and optionally includes document text.
     """
-    document_texts = []
-    for file_path in file_paths:
-        extracted_text = process_uploaded_document(file_path)
-        document_texts.append(extracted_text)
-
-    combined_document_text = "\n\n".join(document_texts)
     language = detect_language(question)
-    prompt = generate_prompt(language, question, user_data, combined_document_text)
+    prompt = generate_prompt(language, question, user_data, document_text, options, rewrite)
 
-    # Prepare request body for the AI model
+    logger.info(f"Generated Prompt: {prompt}")
+
     model_id = "us.meta.llama3-2-90b-instruct-v1:0"
-    body = json.dumps({
-        "prompt": prompt,
-        "max_gen_len": 300,
-        "temperature": 0.7,
-        "top_p": 0.9,
-    })
+    body = json.dumps(
+        {
+            "prompt": prompt,
+            "max_gen_len": 300,
+            "temperature": 0.7,
+        }
+    )
 
     try:
         response = generate_text(model_id, body)
-        generated_text = response.get('generation', '')
-        cleaned_text = clean_response(generated_text)
-        return cleaned_text
+        generated_text = response.get("generation", "")
+        return clean_response(generated_text)
     except ClientError as err:
         message = err.response["Error"]["Message"]
-        logger.error("A client error occurred: %s", message)
+        logger.error(f"A client error occurred: {message}")
+        return "Error in generating response"
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-    return None
+        return "Error in generating response"
 
+def lambda_handler(event, context):
+    """
+    AWS Lambda handler function.
+    """
+    if "body" in event and event["body"]:
+        event = json.loads(event["body"])
 
-if __name__ == "__main__":
-    # API Endpoint
-    user_api_url = "https://api.happly.ai/api/v1/portal/users/ba845892-3275-47a3-9327-fcf7cba266a6"
-    headers = {
-        "Authorization": "Bearer YOUR_API_KEY"  # Replace with the actual API key
-    }
+    client_id = event.get("client_id", None)
+    question = event.get("question")
+    document_text = event.get("document_text", None)
+    options = event.get("options", None)
+    rewrite = event.get("rewrite", None)
 
-    # Fetch User Data
-    user_data = fetch_user_data(user_api_url, headers=headers)
+    # Fetch user data based on client ID or default profile
+    user_data = fetch_user_data(client_id)
+
     if not user_data:
-        print("Failed to fetch user data. Exiting.")
-        exit()
+        return {
+            "statusCode": 500,
+            "body": "Failed to fetch user data"
+        }
 
-    # Example Question
-    question = "Describe your propduct"  # English example
+    try:
+        # Generate response
+        response = integrate_content_with_grant_writing(
+            question, user_data, document_text, options, rewrite
+        )
+        return {
+            "statusCode": 200,
+            "body": response
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error in lambda_handler: {e}")
+        return {
+            "statusCode": 500,
+            "body": "An error occurred"
+        }
 
-    # Path to the uploaded PDF document
-    uploaded_files = ["/Users/chasesimard/Documents/Happly/Govago Business Plan.pdf"]
-
-    # Generate Response
-    response = integrate_document_content_with_grant_writing(question, user_data, uploaded_files)
-    print("Generated Grant Response:\n", response)
